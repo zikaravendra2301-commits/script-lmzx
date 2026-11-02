@@ -1,5 +1,5 @@
 -- LAMZX SCRIPT — BLOX FRUITS
--- Auto Farm, Auto Quest, Mastery Farm, Fruit Sniper
+-- Smart Level Farm + Trade Freeze Exploit
 
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
@@ -11,38 +11,70 @@ local hum = char:WaitForChild("Humanoid")
 
 local STATE = {
     AutoFarm     = false,
-    AutoQuest    = false,
-    MasteryFarm  = false,
-    FruitSniper  = false,
+    TradeFrz     = false,
     AutoRejoin   = false,
     ESP          = false,
 }
 
 -- ============================================
--- CORE UTILS
+-- LEVEL-BASED MOB TABLE
 -- ============================================
 
-local function getClosestEnemy(range)
-    local closest, minDist = nil, range or 100
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= lp then
-            local c = plr.Character
-            if c and c:FindFirstChild("HumanoidRootPart") then
-                local dist = (c.HumanoidRootPart.Position - hrp.Position).Magnitude
-                if dist < minDist then
-                    minDist = dist
-                    closest = c
-                end
-            end
+local MOB_ZONES = {
+    { minLvl = 1,    maxLvl = 100,  zone = "Starter Island",     pos = Vector3.new(938, 31, 421)   },
+    { minLvl = 100,  maxLvl = 300,  zone = "Middle Town",        pos = Vector3.new(-2160, 23, -498) },
+    { minLvl = 300,  maxLvl = 500,  zone = "Jungle",             pos = Vector3.new(1718, 30, 886)   },
+    { minLvl = 500,  maxLvl = 700,  zone = "Pirate Village",     pos = Vector3.new(-1386, 8, 3882)  },
+    { minLvl = 700,  maxLvl = 900,  zone = "Sky Islands",        pos = Vector3.new(-4897, 872, 391) },
+    { minLvl = 900,  maxLvl = 1100, zone = "Marineford",         pos = Vector3.new(-4249, 15, 3789) },
+    { minLvl = 1100, maxLvl = 1300, zone = "Impel Down",         pos = Vector3.new(2075, 14, -2886) },
+    { minLvl = 1300, maxLvl = 1500, zone = "Thriller Bark",      pos = Vector3.new(-9999, 15, 4200) },
+    { minLvl = 1500, maxLvl = 1800, zone = "Underwater City",    pos = Vector3.new(61163, 14, 1819) },
+    { minLvl = 1800, maxLvl = 2000, zone = "Ice Castle",         pos = Vector3.new(6138, 415, 879)  },
+    { minLvl = 2000, maxLvl = 2300, zone = "Flower Hill",        pos = Vector3.new(-4374, 1082, -2250) },
+    { minLvl = 2300, maxLvl = 2600, zone = "Cafe",               pos = Vector3.new(-10100, 220, -9500) },
+    { minLvl = 2600, maxLvl = 9999, zone = "Port Town",          pos = Vector3.new(-9500, 15, 10000)   },
+}
+
+local function getPlayerLevel()
+    local stats = lp:FindFirstChild("Data") or lp:FindFirstChild("leaderstats")
+    if stats then
+        local lvl = stats:FindFirstChild("Level") or stats:FindFirstChild("Lvl")
+        if lvl then return lvl.Value end
+    end
+    -- fallback scan
+    for _, v in ipairs(lp:GetDescendants()) do
+        if (v.Name == "Level" or v.Name == "Lvl") and v:IsA("IntValue") then
+            return v.Value
         end
     end
-    -- NPC mobs
+    return 1
+end
+
+local function getBestZone()
+    local lvl = getPlayerLevel()
+    local best = MOB_ZONES[1]
+    for _, zone in ipairs(MOB_ZONES) do
+        if lvl >= zone.minLvl and lvl <= zone.maxLvl then
+            best = zone
+            break
+        end
+    end
+    return best
+end
+
+-- ============================================
+-- SMART FARM
+-- ============================================
+
+local function getClosestMobInZone(zonePos, radius)
+    local closest, minDist = nil, radius or 300
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
             if obj ~= char and obj.Humanoid.Health > 0 then
-                local dist = (obj.HumanoidRootPart.Position - hrp.Position).Magnitude
-                if dist < minDist then
-                    minDist = dist
+                local distFromZone = (obj.HumanoidRootPart.Position - zonePos).Magnitude
+                if distFromZone < minDist then
+                    minDist = distFromZone
                     closest = obj
                 end
             end
@@ -51,166 +83,125 @@ local function getClosestEnemy(range)
     return closest
 end
 
-local function teleportTo(target)
-    if target and target:FindFirstChild("HumanoidRootPart") then
-        hrp.CFrame = target.HumanoidRootPart.CFrame + Vector3.new(0, 4, 4)
-    end
-end
-
-local function clickEnemy(target)
-    if not target then return end
-    -- Auto click combat
-    for _, v in ipairs(game:GetDescendants()) do
-        if v:IsA("RemoteEvent") then
-            local n = v.Name:lower()
-            if n:find("attack") or n:find("damage") or n:find("hit") or n:find("combat") then
-                pcall(function() v:FireServer(target) end)
-            end
-        end
-    end
-    -- Simulate tool activation
-    local tool = lp.Character:FindFirstChildOfClass("Tool")
-    if tool then
-        pcall(function()
-            tool:Activate()
-        end)
-    end
-end
-
--- ============================================
--- AUTO FARM
--- ============================================
+local statusLbl
 
 local function autoFarmLoop()
     while STATE.AutoFarm do
-        local enemy = getClosestEnemy(200)
-        if enemy then
-            teleportTo(enemy)
-            task.wait(0.1)
-            clickEnemy(enemy)
+        local zone = getBestZone()
+        local lvl  = getPlayerLevel()
+
+        if statusLbl then
+            statusLbl.Text = "Farm: " .. zone.zone .. " (Lvl " .. lvl .. ")"
         end
-        task.wait(0.05)
-    end
-end
 
--- ============================================
--- AUTO QUEST
--- ============================================
+        local mob = getClosestMobInZone(zone.pos, 400)
 
-local function autoQuestLoop()
-    while STATE.AutoQuest do
-        for _, v in ipairs(game:GetDescendants()) do
-            if v:IsA("RemoteEvent") then
-                local n = v.Name:lower()
-                if n:find("quest") or n:find("accept") or n:find("task") then
-                    pcall(function() v:FireServer() end)
-                end
+        if mob and mob:FindFirstChild("HumanoidRootPart") then
+            -- TP ke mob
+            hrp.CFrame = mob.HumanoidRootPart.CFrame + Vector3.new(0, 4, 4)
+            task.wait(0.08)
+
+            -- Attack via tool
+            local tool = char:FindFirstChildOfClass("Tool")
+            if tool and tool:FindFirstChild("Handle") then
+                pcall(function() tool:Activate() end)
             end
-        end
-        task.wait(3)
-    end
-end
 
--- ============================================
--- MASTERY FARM
--- ============================================
-
-local function masteryFarmLoop()
-    while STATE.MasteryFarm do
-        local enemy = getClosestEnemy(300)
-        if enemy then
-            teleportTo(enemy)
-            task.wait(0.05)
-            -- spam skills
+            -- Fire attack remotes
             for _, v in ipairs(game:GetDescendants()) do
                 if v:IsA("RemoteEvent") then
                     local n = v.Name:lower()
-                    if n:find("skill") or n:find("ability") or n:find("move") then
-                        pcall(function() v:FireServer(enemy) end)
+                    if n:find("attack") or n:find("damage") or n:find("hit") then
+                        pcall(function() v:FireServer(mob, mob:FindFirstChild("HumanoidRootPart")) end)
                     end
                 end
             end
+        else
+            -- Zona kosong, tp ke zona
+            hrp.CFrame = CFrame.new(zone.pos + Vector3.new(0, 5, 0))
         end
+
         task.wait(0.05)
     end
+    if statusLbl then statusLbl.Text = "Farm: OFF" end
 end
 
 -- ============================================
--- FRUIT SNIPER
+-- TRADE FREEZE EXPLOIT
 -- ============================================
 
-local function fruitSniperLoop()
-    while STATE.FruitSniper do
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            local n = obj.Name:lower()
-            if obj:IsA("BasePart") or obj:IsA("Model") then
-                if n:find("fruit") or n:find("devil") or n:find("blox") then
-                    if obj:IsA("BasePart") then
-                        hrp.CFrame = obj.CFrame + Vector3.new(0, 3, 0)
-                    elseif obj:IsA("Model") and obj.PrimaryPart then
-                        hrp.CFrame = obj.PrimaryPart.CFrame + Vector3.new(0, 3, 0)
-                    end
-                    -- pickup remote
-                    for _, v in ipairs(game:GetDescendants()) do
-                        if v:IsA("RemoteEvent") then
-                            local rn = v.Name:lower()
-                            if rn:find("pickup") or rn:find("collect") or rn:find("fruit") then
-                                pcall(function() v:FireServer(obj) end)
+--[[
+    Cara kerja:
+    1. Masuk trade session sama target
+    2. Aktifin Trade Freeze
+    3. Script nge-hook trade confirm remote
+    4. Pas lawan add fruit & confirm,
+       script intercept cancel dari lawan
+       dan langsung fire confirm dari sisi kita
+       sebelum server process cancel mereka
+]]
+
+local tradeFreezeActive = false
+local tradeHook = nil
+local tradeLbl
+
+local function enableTradeFreeze()
+    tradeFreezeActive = true
+    if tradeLbl then tradeLbl.Text = "Trade Freeze: ACTIVE — waiting trade..." end
+
+    pcall(function()
+        local mt  = getrawmetatable(game)
+        local old = mt.__namecall
+        setreadonly(mt, false)
+
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            local args   = {...}
+
+            if method == "FireServer" or method == "InvokeServer" then
+                local remoteName = (self.Name or ""):lower()
+
+                -- Freeze: block cancel/decline dari lawan
+                if remoteName:find("trade") then
+                    if args[1] and type(args[1]) == "string" then
+                        local a = args[1]:lower()
+                        -- jangan block confirm kita, block cancel lawan
+                        if a:find("cancel") or a:find("decline") or a:find("reject") then
+                            if tradeFreezeActive then
+                                -- drop cancel → lawan gak bisa cancel
+                                return nil
                             end
                         end
                     end
+
+                    -- Auto confirm dari sisi kita
+                    if remoteName:find("confirm") or remoteName:find("accept") then
+                        -- fire dulu sebelum lanjut normal
+                        task.spawn(function()
+                            task.wait(0.05)
+                            pcall(function() self:FireServer(unpack(args)) end)
+                        end)
+                    end
                 end
             end
-        end
-        task.wait(0.5)
-    end
+
+            return old(self, ...)
+        end)
+
+        setreadonly(mt, true)
+        tradeHook = mt.__namecall
+    end)
+end
+
+local function disableTradeFreeze()
+    tradeFreezeActive = false
+    if tradeLbl then tradeLbl.Text = "Trade Freeze: OFF" end
+    -- restore metatable namecall ke default susah di-restore,
+    -- rejoin recommended setelah pakai fitur ini
 end
 
 -- ============================================
--- ESP
--- ============================================
-
-local espBillboards = {}
-
-local function clearESP()
-    for _, b in ipairs(espBillboards) do
-        pcall(function() b:Destroy() end)
-    end
-    espBillboards = {}
-end
-
-local function drawESP()
-    clearESP()
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
-            if obj ~= char then
-                local bb = Instance.new("BillboardGui", obj.HumanoidRootPart)
-                bb.Size           = UDim2.new(0, 80, 0, 30)
-                bb.AlwaysOnTop    = true
-                bb.StudsOffset    = Vector3.new(0, 3, 0)
-                local lbl = Instance.new("TextLabel", bb)
-                lbl.Size          = UDim2.new(1, 0, 1, 0)
-                lbl.BackgroundTransparency = 1
-                lbl.TextColor3    = Color3.fromRGB(239, 68, 68)
-                lbl.Font          = Enum.Font.GothamBold
-                lbl.TextSize      = 11
-                lbl.Text          = obj.Name
-                table.insert(espBillboards, bb)
-            end
-        end
-    end
-end
-
-RunService.Heartbeat:Connect(function()
-    if STATE.ESP then
-        drawESP()
-    else
-        clearESP()
-    end
-end)
-
--- ============================================
--- REJOIN
+-- AUTO REJOIN
 -- ============================================
 
 lp.AncestryChanged:Connect(function(_, parent)
@@ -224,9 +215,7 @@ lp.CharacterAdded:Connect(function(newChar)
     char = newChar
     hrp  = newChar:WaitForChild("HumanoidRootPart")
     hum  = newChar:WaitForChild("Humanoid")
-    if STATE.AutoFarm    then task.spawn(autoFarmLoop)    end
-    if STATE.MasteryFarm then task.spawn(masteryFarmLoop) end
-    if STATE.FruitSniper then task.spawn(fruitSniperLoop) end
+    if STATE.AutoFarm then task.spawn(autoFarmLoop) end
 end)
 
 -- ============================================
@@ -234,18 +223,19 @@ end)
 -- ============================================
 
 local sg = Instance.new("ScreenGui", lp.PlayerGui)
-sg.Name         = "LAMZX_BF"
+sg.Name         = "LAMZX_BF2"
 sg.ResetOnSpawn = false
 
 local frame = Instance.new("Frame", sg)
-frame.Size             = UDim2.new(0, 250, 0, 360)
-frame.Position         = UDim2.new(0.01, 0, 0.2, 0)
+frame.Size             = UDim2.new(0, 260, 0, 400)
+frame.Position         = UDim2.new(0.01, 0, 0.15, 0)
 frame.BackgroundColor3 = Color3.fromRGB(8, 8, 16)
 frame.BorderSizePixel  = 0
 frame.Active           = true
 frame.Draggable        = true
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
 
+-- Title
 local titleBar = Instance.new("Frame", frame)
 titleBar.Size             = UDim2.new(1, 0, 0, 36)
 titleBar.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
@@ -253,22 +243,61 @@ titleBar.BorderSizePixel  = 0
 Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 12)
 
 local titleLbl = Instance.new("TextLabel", titleBar)
-titleLbl.Text               = "LAMZX — BLOX FRUITS"
+titleLbl.Text               = "LAMZX — BLOX FRUITS v2"
 titleLbl.Size               = UDim2.new(1, 0, 1, 0)
 titleLbl.BackgroundTransparency = 1
 titleLbl.TextColor3         = Color3.new(1,1,1)
 titleLbl.Font               = Enum.Font.GothamBold
 titleLbl.TextSize            = 13
 
-local function makeToggle(parent, yPos, labelOff, labelOn, colorOn, callback)
+-- Status farm label
+statusLbl = Instance.new("TextLabel", frame)
+statusLbl.Text               = "Farm: OFF"
+statusLbl.Size               = UDim2.new(0.9, 0, 0, 20)
+statusLbl.Position           = UDim2.new(0.05, 0, 0, 44)
+statusLbl.BackgroundTransparency = 1
+statusLbl.TextColor3         = Color3.fromRGB(148, 163, 184)
+statusLbl.Font               = Enum.Font.Gotham
+statusLbl.TextSize           = 11
+statusLbl.TextXAlignment     = Enum.TextXAlignment.Left
+
+-- Trade status label
+tradeLbl = Instance.new("TextLabel", frame)
+tradeLbl.Text               = "Trade Freeze: OFF"
+tradeLbl.Size               = UDim2.new(0.9, 0, 0, 20)
+tradeLbl.Position           = UDim2.new(0.05, 0, 0, 66)
+tradeLbl.BackgroundTransparency = 1
+tradeLbl.TextColor3         = Color3.fromRGB(148, 163, 184)
+tradeLbl.Font               = Enum.Font.Gotham
+tradeLbl.TextSize           = 11
+tradeLbl.TextXAlignment     = Enum.TextXAlignment.Left
+
+-- Level display
+local lvlLbl = Instance.new("TextLabel", frame)
+lvlLbl.Size               = UDim2.new(0.9, 0, 0, 18)
+lvlLbl.Position           = UDim2.new(0.05, 0, 0, 88)
+lvlLbl.BackgroundTransparency = 1
+lvlLbl.TextColor3         = Color3.fromRGB(99, 102, 241)
+lvlLbl.Font               = Enum.Font.GothamBold
+lvlLbl.TextSize           = 11
+lvlLbl.TextXAlignment     = Enum.TextXAlignment.Left
+
+RunService.Heartbeat:Connect(function()
+    local lvl  = getPlayerLevel()
+    local zone = getBestZone()
+    lvlLbl.Text = "Level: " .. lvl .. " → Zone: " .. zone.zone
+end)
+
+-- Toggle builder
+local function makeToggle(parent, yPos, labelText, colorOn, callback)
     local btn = Instance.new("TextButton", parent)
     btn.Size             = UDim2.new(0.88, 0, 0, 38)
     btn.Position         = UDim2.new(0.06, 0, 0, yPos)
-    btn.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
-    btn.TextColor3       = Color3.fromRGB(148, 163, 184)
+    btn.BackgroundColor3 = Color3.fromRGB(18, 18, 30)
+    btn.TextColor3       = Color3.fromRGB(100, 100, 130)
     btn.Font             = Enum.Font.GothamBold
     btn.TextSize         = 12
-    btn.Text             = labelOff .. "  [ OFF ]"
+    btn.Text             = labelText .. "  [ OFF ]"
     btn.BorderSizePixel  = 0
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
 
@@ -276,38 +305,103 @@ local function makeToggle(parent, yPos, labelOff, labelOn, colorOn, callback)
     btn.MouseButton1Click:Connect(function()
         active = not active
         if active then
-            btn.Text             = labelOn .. "  [ ON ]"
+            btn.Text             = labelText .. "  [ ON ]"
             btn.BackgroundColor3 = colorOn
             btn.TextColor3       = Color3.new(1,1,1)
         else
-            btn.Text             = labelOff .. "  [ OFF ]"
-            btn.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
-            btn.TextColor3       = Color3.fromRGB(148, 163, 184)
+            btn.Text             = labelText .. "  [ OFF ]"
+            btn.BackgroundColor3 = Color3.fromRGB(18, 18, 30)
+            btn.TextColor3       = Color3.fromRGB(100, 100, 130)
         end
         callback(active)
     end)
     return btn
 end
 
-makeToggle(frame, 46,  "AUTO FARM",    "AUTO FARM",    Color3.fromRGB(34,197,94),   function(on) STATE.AutoFarm    = on; if on then task.spawn(autoFarmLoop)    end end)
-makeToggle(frame, 94,  "AUTO QUEST",   "AUTO QUEST",   Color3.fromRGB(251,191,36),  function(on) STATE.AutoQuest   = on; if on then task.spawn(autoQuestLoop)   end end)
-makeToggle(frame, 142, "MASTERY FARM", "MASTERY FARM", Color3.fromRGB(168,85,247),  function(on) STATE.MasteryFarm = on; if on then task.spawn(masteryFarmLoop) end end)
-makeToggle(frame, 190, "FRUIT SNIPER", "FRUIT SNIPER", Color3.fromRGB(239,68,68),   function(on) STATE.FruitSniper = on; if on then task.spawn(fruitSniperLoop) end end)
-makeToggle(frame, 238, "ESP MOBS",     "ESP MOBS",     Color3.fromRGB(14,165,233),  function(on) STATE.ESP         = on end)
-makeToggle(frame, 286, "AUTO REJOIN",  "AUTO REJOIN",  Color3.fromRGB(99,102,241),  function(on) STATE.AutoRejoin  = on end)
+makeToggle(frame, 116, "AUTO FARM (SMART LEVEL)",
+    Color3.fromRGB(34, 197, 94),
+    function(on)
+        STATE.AutoFarm = on
+        if on then task.spawn(autoFarmLoop) end
+    end
+)
+
+makeToggle(frame, 164, "TRADE FREEZE",
+    Color3.fromRGB(239, 68, 68),
+    function(on)
+        STATE.TradeFrz = on
+        if on then
+            enableTradeFreeze()
+        else
+            disableTradeFreeze()
+        end
+    end
+)
+
+makeToggle(frame, 212, "AUTO REJOIN",
+    Color3.fromRGB(251, 191, 36),
+    function(on)
+        STATE.AutoRejoin = on
+    end
+)
+
+-- Zone selector manual
+local zoneLabel = Instance.new("TextLabel", frame)
+zoneLabel.Text               = "FORCE ZONE:"
+zoneLabel.Size               = UDim2.new(0.88, 0, 0, 20)
+zoneLabel.Position           = UDim2.new(0.06, 0, 0, 262)
+zoneLabel.BackgroundTransparency = 1
+zoneLabel.TextColor3         = Color3.fromRGB(148, 163, 184)
+zoneLabel.Font               = Enum.Font.GothamBold
+zoneLabel.TextSize           = 11
+zoneLabel.TextXAlignment     = Enum.TextXAlignment.Left
+
+local zoneIdx = 1
+local zoneCycleBtn = Instance.new("TextButton", frame)
+zoneCycleBtn.Size             = UDim2.new(0.88, 0, 0, 34)
+zoneCycleBtn.Position         = UDim2.new(0.06, 0, 0, 284)
+zoneCycleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+zoneCycleBtn.TextColor3       = Color3.fromRGB(148, 163, 184)
+zoneCycleBtn.Font             = Enum.Font.Gotham
+zoneCycleBtn.TextSize         = 11
+zoneCycleBtn.Text             = MOB_ZONES[1].zone
+zoneCycleBtn.BorderSizePixel  = 0
+Instance.new("UICorner", zoneCycleBtn).CornerRadius = UDim.new(0, 8)
+
+zoneCycleBtn.MouseButton1Click:Connect(function()
+    zoneIdx = (zoneIdx % #MOB_ZONES) + 1
+    zoneCycleBtn.Text = MOB_ZONES[zoneIdx].zone
+end)
+
+local tpZoneBtn = Instance.new("TextButton", frame)
+tpZoneBtn.Size             = UDim2.new(0.88, 0, 0, 30)
+tpZoneBtn.Position         = UDim2.new(0.06, 0, 0, 326)
+tpZoneBtn.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
+tpZoneBtn.TextColor3       = Color3.new(1,1,1)
+tpZoneBtn.Font             = Enum.Font.GothamBold
+tpZoneBtn.TextSize         = 12
+tpZoneBtn.Text             = "TP TO ZONE"
+tpZoneBtn.BorderSizePixel  = 0
+Instance.new("UICorner", tpZoneBtn).CornerRadius = UDim.new(0, 8)
+
+tpZoneBtn.MouseButton1Click:Connect(function()
+    local zone = MOB_ZONES[zoneIdx]
+    hrp.CFrame = CFrame.new(zone.pos + Vector3.new(0, 5, 0))
+end)
 
 local rejoinBtn = Instance.new("TextButton", frame)
-rejoinBtn.Text              = "MANUAL REJOIN"
-rejoinBtn.Size              = UDim2.new(0.88, 0, 0, 26)
-rejoinBtn.Position          = UDim2.new(0.06, 0, 0, 328)
-rejoinBtn.BackgroundColor3  = Color3.fromRGB(15, 15, 28)
-rejoinBtn.TextColor3        = Color3.fromRGB(100, 100, 130)
-rejoinBtn.Font              = Enum.Font.Gotham
-rejoinBtn.TextSize          = 11
-rejoinBtn.BorderSizePixel   = 0
+rejoinBtn.Size             = UDim2.new(0.88, 0, 0, 26)
+rejoinBtn.Position         = UDim2.new(0.06, 0, 0, 365)
+rejoinBtn.BackgroundColor3 = Color3.fromRGB(15, 15, 28)
+rejoinBtn.TextColor3       = Color3.fromRGB(80, 80, 110)
+rejoinBtn.Font             = Enum.Font.Gotham
+rejoinBtn.TextSize         = 11
+rejoinBtn.Text             = "MANUAL REJOIN"
+rejoinBtn.BorderSizePixel  = 0
 Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 7)
+
 rejoinBtn.MouseButton1Click:Connect(function()
     TeleportService:Teleport(game.PlaceId)
 end)
 
-print("[LAMZX] Blox Fruits Loaded — 6767")
+print("[LAMZX v2] Loaded — Smart Farm + Trade Freeze | 6767")
