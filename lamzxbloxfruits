@@ -1,0 +1,313 @@
+-- LAMZX SCRIPT — BLOX FRUITS
+-- Auto Farm, Auto Quest, Mastery Farm, Fruit Sniper
+
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
+local lp = Players.LocalPlayer
+local char = lp.Character or lp.CharacterAdded:Wait()
+local hrp = char:WaitForChild("HumanoidRootPart")
+local hum = char:WaitForChild("Humanoid")
+
+local STATE = {
+    AutoFarm     = false,
+    AutoQuest    = false,
+    MasteryFarm  = false,
+    FruitSniper  = false,
+    AutoRejoin   = false,
+    ESP          = false,
+}
+
+-- ============================================
+-- CORE UTILS
+-- ============================================
+
+local function getClosestEnemy(range)
+    local closest, minDist = nil, range or 100
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= lp then
+            local c = plr.Character
+            if c and c:FindFirstChild("HumanoidRootPart") then
+                local dist = (c.HumanoidRootPart.Position - hrp.Position).Magnitude
+                if dist < minDist then
+                    minDist = dist
+                    closest = c
+                end
+            end
+        end
+    end
+    -- NPC mobs
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
+            if obj ~= char and obj.Humanoid.Health > 0 then
+                local dist = (obj.HumanoidRootPart.Position - hrp.Position).Magnitude
+                if dist < minDist then
+                    minDist = dist
+                    closest = obj
+                end
+            end
+        end
+    end
+    return closest
+end
+
+local function teleportTo(target)
+    if target and target:FindFirstChild("HumanoidRootPart") then
+        hrp.CFrame = target.HumanoidRootPart.CFrame + Vector3.new(0, 4, 4)
+    end
+end
+
+local function clickEnemy(target)
+    if not target then return end
+    -- Auto click combat
+    for _, v in ipairs(game:GetDescendants()) do
+        if v:IsA("RemoteEvent") then
+            local n = v.Name:lower()
+            if n:find("attack") or n:find("damage") or n:find("hit") or n:find("combat") then
+                pcall(function() v:FireServer(target) end)
+            end
+        end
+    end
+    -- Simulate tool activation
+    local tool = lp.Character:FindFirstChildOfClass("Tool")
+    if tool then
+        pcall(function()
+            tool:Activate()
+        end)
+    end
+end
+
+-- ============================================
+-- AUTO FARM
+-- ============================================
+
+local function autoFarmLoop()
+    while STATE.AutoFarm do
+        local enemy = getClosestEnemy(200)
+        if enemy then
+            teleportTo(enemy)
+            task.wait(0.1)
+            clickEnemy(enemy)
+        end
+        task.wait(0.05)
+    end
+end
+
+-- ============================================
+-- AUTO QUEST
+-- ============================================
+
+local function autoQuestLoop()
+    while STATE.AutoQuest do
+        for _, v in ipairs(game:GetDescendants()) do
+            if v:IsA("RemoteEvent") then
+                local n = v.Name:lower()
+                if n:find("quest") or n:find("accept") or n:find("task") then
+                    pcall(function() v:FireServer() end)
+                end
+            end
+        end
+        task.wait(3)
+    end
+end
+
+-- ============================================
+-- MASTERY FARM
+-- ============================================
+
+local function masteryFarmLoop()
+    while STATE.MasteryFarm do
+        local enemy = getClosestEnemy(300)
+        if enemy then
+            teleportTo(enemy)
+            task.wait(0.05)
+            -- spam skills
+            for _, v in ipairs(game:GetDescendants()) do
+                if v:IsA("RemoteEvent") then
+                    local n = v.Name:lower()
+                    if n:find("skill") or n:find("ability") or n:find("move") then
+                        pcall(function() v:FireServer(enemy) end)
+                    end
+                end
+            end
+        end
+        task.wait(0.05)
+    end
+end
+
+-- ============================================
+-- FRUIT SNIPER
+-- ============================================
+
+local function fruitSniperLoop()
+    while STATE.FruitSniper do
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            local n = obj.Name:lower()
+            if obj:IsA("BasePart") or obj:IsA("Model") then
+                if n:find("fruit") or n:find("devil") or n:find("blox") then
+                    if obj:IsA("BasePart") then
+                        hrp.CFrame = obj.CFrame + Vector3.new(0, 3, 0)
+                    elseif obj:IsA("Model") and obj.PrimaryPart then
+                        hrp.CFrame = obj.PrimaryPart.CFrame + Vector3.new(0, 3, 0)
+                    end
+                    -- pickup remote
+                    for _, v in ipairs(game:GetDescendants()) do
+                        if v:IsA("RemoteEvent") then
+                            local rn = v.Name:lower()
+                            if rn:find("pickup") or rn:find("collect") or rn:find("fruit") then
+                                pcall(function() v:FireServer(obj) end)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(0.5)
+    end
+end
+
+-- ============================================
+-- ESP
+-- ============================================
+
+local espBillboards = {}
+
+local function clearESP()
+    for _, b in ipairs(espBillboards) do
+        pcall(function() b:Destroy() end)
+    end
+    espBillboards = {}
+end
+
+local function drawESP()
+    clearESP()
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj:FindFirstChild("Humanoid") and obj:FindFirstChild("HumanoidRootPart") then
+            if obj ~= char then
+                local bb = Instance.new("BillboardGui", obj.HumanoidRootPart)
+                bb.Size           = UDim2.new(0, 80, 0, 30)
+                bb.AlwaysOnTop    = true
+                bb.StudsOffset    = Vector3.new(0, 3, 0)
+                local lbl = Instance.new("TextLabel", bb)
+                lbl.Size          = UDim2.new(1, 0, 1, 0)
+                lbl.BackgroundTransparency = 1
+                lbl.TextColor3    = Color3.fromRGB(239, 68, 68)
+                lbl.Font          = Enum.Font.GothamBold
+                lbl.TextSize      = 11
+                lbl.Text          = obj.Name
+                table.insert(espBillboards, bb)
+            end
+        end
+    end
+end
+
+RunService.Heartbeat:Connect(function()
+    if STATE.ESP then
+        drawESP()
+    else
+        clearESP()
+    end
+end)
+
+-- ============================================
+-- REJOIN
+-- ============================================
+
+lp.AncestryChanged:Connect(function(_, parent)
+    if not parent and STATE.AutoRejoin then
+        task.wait(1.5)
+        TeleportService:Teleport(game.PlaceId)
+    end
+end)
+
+lp.CharacterAdded:Connect(function(newChar)
+    char = newChar
+    hrp  = newChar:WaitForChild("HumanoidRootPart")
+    hum  = newChar:WaitForChild("Humanoid")
+    if STATE.AutoFarm    then task.spawn(autoFarmLoop)    end
+    if STATE.MasteryFarm then task.spawn(masteryFarmLoop) end
+    if STATE.FruitSniper then task.spawn(fruitSniperLoop) end
+end)
+
+-- ============================================
+-- GUI
+-- ============================================
+
+local sg = Instance.new("ScreenGui", lp.PlayerGui)
+sg.Name         = "LAMZX_BF"
+sg.ResetOnSpawn = false
+
+local frame = Instance.new("Frame", sg)
+frame.Size             = UDim2.new(0, 250, 0, 360)
+frame.Position         = UDim2.new(0.01, 0, 0.2, 0)
+frame.BackgroundColor3 = Color3.fromRGB(8, 8, 16)
+frame.BorderSizePixel  = 0
+frame.Active           = true
+frame.Draggable        = true
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+
+local titleBar = Instance.new("Frame", frame)
+titleBar.Size             = UDim2.new(1, 0, 0, 36)
+titleBar.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
+titleBar.BorderSizePixel  = 0
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 12)
+
+local titleLbl = Instance.new("TextLabel", titleBar)
+titleLbl.Text               = "LAMZX — BLOX FRUITS"
+titleLbl.Size               = UDim2.new(1, 0, 1, 0)
+titleLbl.BackgroundTransparency = 1
+titleLbl.TextColor3         = Color3.new(1,1,1)
+titleLbl.Font               = Enum.Font.GothamBold
+titleLbl.TextSize            = 13
+
+local function makeToggle(parent, yPos, labelOff, labelOn, colorOn, callback)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size             = UDim2.new(0.88, 0, 0, 38)
+    btn.Position         = UDim2.new(0.06, 0, 0, yPos)
+    btn.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+    btn.TextColor3       = Color3.fromRGB(148, 163, 184)
+    btn.Font             = Enum.Font.GothamBold
+    btn.TextSize         = 12
+    btn.Text             = labelOff .. "  [ OFF ]"
+    btn.BorderSizePixel  = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+    local active = false
+    btn.MouseButton1Click:Connect(function()
+        active = not active
+        if active then
+            btn.Text             = labelOn .. "  [ ON ]"
+            btn.BackgroundColor3 = colorOn
+            btn.TextColor3       = Color3.new(1,1,1)
+        else
+            btn.Text             = labelOff .. "  [ OFF ]"
+            btn.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+            btn.TextColor3       = Color3.fromRGB(148, 163, 184)
+        end
+        callback(active)
+    end)
+    return btn
+end
+
+makeToggle(frame, 46,  "AUTO FARM",    "AUTO FARM",    Color3.fromRGB(34,197,94),   function(on) STATE.AutoFarm    = on; if on then task.spawn(autoFarmLoop)    end end)
+makeToggle(frame, 94,  "AUTO QUEST",   "AUTO QUEST",   Color3.fromRGB(251,191,36),  function(on) STATE.AutoQuest   = on; if on then task.spawn(autoQuestLoop)   end end)
+makeToggle(frame, 142, "MASTERY FARM", "MASTERY FARM", Color3.fromRGB(168,85,247),  function(on) STATE.MasteryFarm = on; if on then task.spawn(masteryFarmLoop) end end)
+makeToggle(frame, 190, "FRUIT SNIPER", "FRUIT SNIPER", Color3.fromRGB(239,68,68),   function(on) STATE.FruitSniper = on; if on then task.spawn(fruitSniperLoop) end end)
+makeToggle(frame, 238, "ESP MOBS",     "ESP MOBS",     Color3.fromRGB(14,165,233),  function(on) STATE.ESP         = on end)
+makeToggle(frame, 286, "AUTO REJOIN",  "AUTO REJOIN",  Color3.fromRGB(99,102,241),  function(on) STATE.AutoRejoin  = on end)
+
+local rejoinBtn = Instance.new("TextButton", frame)
+rejoinBtn.Text              = "MANUAL REJOIN"
+rejoinBtn.Size              = UDim2.new(0.88, 0, 0, 26)
+rejoinBtn.Position          = UDim2.new(0.06, 0, 0, 328)
+rejoinBtn.BackgroundColor3  = Color3.fromRGB(15, 15, 28)
+rejoinBtn.TextColor3        = Color3.fromRGB(100, 100, 130)
+rejoinBtn.Font              = Enum.Font.Gotham
+rejoinBtn.TextSize          = 11
+rejoinBtn.BorderSizePixel   = 0
+Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 7)
+rejoinBtn.MouseButton1Click:Connect(function()
+    TeleportService:Teleport(game.PlaceId)
+end)
+
+print("[LAMZX] Blox Fruits Loaded — 6767")
