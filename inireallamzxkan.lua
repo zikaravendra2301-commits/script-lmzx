@@ -1,22 +1,97 @@
--- LAMZX SCRIPT STEAL AN EGG
--- Auto steal eggs to furthest point
+-- LAMZX SCRIPT STEAL AN EGG + BYPASS BAN
+-- Full toggle: Auto Steal + Bypass via button
 
 local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
 local RunService = game:GetService("RunService")
 local lp = Players.LocalPlayer
 local char = lp.Character or lp.CharacterAdded:Wait()
 local hrp = char:WaitForChild("HumanoidRootPart")
 local hum = char:WaitForChild("Humanoid")
 
-local CONFIG = {
-    WalkSpeed   = 100,
-    JumpPower   = 80,
-    AutoSteal   = true,
-    StealRadius = 60,
-    Delay       = 0.05,
+local STATE = {
+    AutoSteal   = false,
+    BypassActive = false,
+    AutoRejoin  = false,
 }
 
--- Noclip
+local placeId = game.PlaceId
+
+-- ============================================
+-- BYPASS MODULE (toggled)
+-- ============================================
+
+local bypassConnections = {}
+
+local function enableBypass()
+    -- Spoof display name
+    pcall(function()
+        lp.DisplayName = "Player_" .. math.random(10000, 99999)
+    end)
+
+    -- Auto rejoin on kick
+    local c = lp.AncestryChanged:Connect(function(_, parent)
+        if not parent and STATE.AutoRejoin then
+            task.wait(1.5)
+            TeleportService:Teleport(placeId)
+        end
+    end)
+    table.insert(bypassConnections, c)
+
+    -- Intercept ban remotes via metatable
+    pcall(function()
+        local mt = getrawmetatable(game)
+        local old = mt.__namecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if method == "FireServer" or method == "InvokeServer" then
+                local args = {...}
+                if args[1] and type(args[1]) == "string" then
+                    local lower = args[1]:lower()
+                    if lower:find("ban") or lower:find("kick") or lower:find("report") then
+                        return nil
+                    end
+                end
+            end
+            return old(self, ...)
+        end)
+        setreadonly(mt, true)
+    end)
+
+    -- Block ban RemoteEvents
+    pcall(function()
+        for _, v in ipairs(game:GetDescendants()) do
+            if v:IsA("RemoteEvent") then
+                local n = v.Name:lower()
+                if n:find("ban") or n:find("kick") or n:find("report") then
+                    local mt2 = getrawmetatable(v)
+                    setreadonly(mt2, false)
+                    mt2.__namecall = newcclosure(function() return nil end)
+                    setreadonly(mt2, true)
+                end
+            end
+        end
+    end)
+
+    STATE.BypassActive = true
+end
+
+local function disableBypass()
+    for _, c in ipairs(bypassConnections) do
+        c:Disconnect()
+    end
+    bypassConnections = {}
+    STATE.BypassActive = false
+end
+
+-- ============================================
+-- STEAL MODULE (toggled)
+-- ============================================
+
+hum.WalkSpeed = 100
+hum.JumpPower = 80
+
 local noclip = false
 RunService.Stepped:Connect(function()
     if noclip then
@@ -28,15 +103,8 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- Speed boost
-hum.WalkSpeed = CONFIG.WalkSpeed
-hum.JumpPower = CONFIG.JumpPower
-
--- Teleport to furthest egg
 local function getFurthestEgg()
-    local furthest = nil
-    local maxDist  = 0
-
+    local furthest, maxDist = nil, 0
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj.Name:lower():find("egg") and obj:IsA("BasePart") then
             local dist = (obj.Position - hrp.Position).Magnitude
@@ -46,122 +114,157 @@ local function getFurthestEgg()
             end
         end
     end
-
     return furthest
 end
 
--- Steal loop
 local function stealLoop()
-    while CONFIG.AutoSteal do
+    while STATE.AutoSteal do
         local egg = getFurthestEgg()
         if egg then
             noclip = true
-            hrp.CFrame = egg.CFrame + Vector3.new(0, 3, 0)
+            local offset = Vector3.new(math.random(-2,2), 3, math.random(-2,2))
+            hrp.CFrame = egg.CFrame + offset
             task.wait(0.1)
-
-            -- Simulate touch / interact
-            local touchFn = egg.Touched
-            if touchFn then
-                pcall(function() touchFn:Fire(hrp) end)
-            end
-
-            -- Try RemoteEvent trigger
+            pcall(function() egg.Touched:Fire(hrp) end)
             for _, v in ipairs(game:GetDescendants()) do
-                if v:IsA("RemoteEvent") and (
-                    v.Name:lower():find("steal") or
-                    v.Name:lower():find("egg") or
-                    v.Name:lower():find("collect") or
-                    v.Name:lower():find("grab")
-                ) then
-                    pcall(function() v:FireServer(egg) end)
+                if v:IsA("RemoteEvent") then
+                    local n = v.Name:lower()
+                    if n:find("steal") or n:find("egg") or n:find("collect") or n:find("grab") then
+                        pcall(function() v:FireServer(egg) end)
+                    end
                 end
             end
-
             noclip = false
         end
-        task.wait(CONFIG.Delay)
+        task.wait(0.05)
     end
 end
 
--- GUI
-local sg = Instance.new("ScreenGui", lp.PlayerGui)
-sg.Name          = "LAMZX_GUI"
-sg.ResetOnSpawn  = false
-
-local frame = Instance.new("Frame", sg)
-frame.Size            = UDim2.new(0, 220, 0, 130)
-frame.Position        = UDim2.new(0.01, 0, 0.4, 0)
-frame.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
-frame.BorderSizePixel = 0
-
-local corner = Instance.new("UICorner", frame)
-corner.CornerRadius = UDim.new(0, 10)
-
-local title = Instance.new("TextLabel", frame)
-title.Text              = "LAMZX SCRIPT"
-title.Size              = UDim2.new(1, 0, 0, 30)
-title.BackgroundColor3  = Color3.fromRGB(99, 102, 241)
-title.TextColor3        = Color3.new(1,1,1)
-title.Font              = Enum.Font.GothamBold
-title.TextSize          = 13
-title.BorderSizePixel   = 0
-
-local sub = Instance.new("TextLabel", frame)
-sub.Text             = "STEAL AN EGG — FURTHEST TARGET"
-sub.Size             = UDim2.new(1, 0, 0, 20)
-sub.Position         = UDim2.new(0, 0, 0, 30)
-sub.BackgroundTransparency = 1
-sub.TextColor3       = Color3.fromRGB(148, 163, 184)
-sub.Font             = Enum.Font.Gotham
-sub.TextSize         = 10
-
-local statusLbl = Instance.new("TextLabel", frame)
-statusLbl.Text             = "Status: RUNNING"
-statusLbl.Size             = UDim2.new(1, 0, 0, 20)
-statusLbl.Position         = UDim2.new(0, 0, 0, 55)
-statusLbl.BackgroundTransparency = 1
-statusLbl.TextColor3       = Color3.fromRGB(34, 197, 94)
-statusLbl.Font             = Enum.Font.Gotham
-statusLbl.TextSize         = 11
-
-local toggleBtn = Instance.new("TextButton", frame)
-toggleBtn.Text              = "STOP"
-toggleBtn.Size              = UDim2.new(0.9, 0, 0, 32)
-toggleBtn.Position          = UDim2.new(0.05, 0, 0, 85)
-toggleBtn.BackgroundColor3  = Color3.fromRGB(239, 68, 68)
-toggleBtn.TextColor3        = Color3.new(1,1,1)
-toggleBtn.Font              = Enum.Font.GothamBold
-toggleBtn.TextSize          = 12
-toggleBtn.BorderSizePixel   = 0
-
-local btnCorner = Instance.new("UICorner", toggleBtn)
-btnCorner.CornerRadius = UDim.new(0, 7)
-
-toggleBtn.MouseButton1Click:Connect(function()
-    CONFIG.AutoSteal = not CONFIG.AutoSteal
-    if CONFIG.AutoSteal then
-        toggleBtn.Text             = "STOP"
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(239, 68, 68)
-        statusLbl.Text             = "Status: RUNNING"
-        statusLbl.TextColor3       = Color3.fromRGB(34, 197, 94)
-        task.spawn(stealLoop)
-    else
-        toggleBtn.Text             = "START"
-        toggleBtn.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
-        statusLbl.Text             = "Status: STOPPED"
-        statusLbl.TextColor3       = Color3.fromRGB(239, 68, 68)
-    end
-end)
-
--- Respawn handler
 lp.CharacterAdded:Connect(function(newChar)
     char = newChar
     hrp  = newChar:WaitForChild("HumanoidRootPart")
     hum  = newChar:WaitForChild("Humanoid")
-    hum.WalkSpeed = CONFIG.WalkSpeed
-    hum.JumpPower = CONFIG.JumpPower
-    if CONFIG.AutoSteal then task.spawn(stealLoop) end
+    hum.WalkSpeed = 100
+    hum.JumpPower = 80
+    if STATE.AutoSteal then task.spawn(stealLoop) end
 end)
 
-task.spawn(stealLoop)
-print("[LAMZX] Steal An Egg — Active | Target: Furthest Egg")
+-- ============================================
+-- GUI
+-- ============================================
+
+local sg = Instance.new("ScreenGui", lp.PlayerGui)
+sg.Name         = "LAMZX_GUI"
+sg.ResetOnSpawn = false
+
+local frame = Instance.new("Frame", sg)
+frame.Size             = UDim2.new(0, 240, 0, 220)
+frame.Position         = UDim2.new(0.01, 0, 0.35, 0)
+frame.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
+frame.BorderSizePixel  = 0
+frame.Active           = true
+frame.Draggable        = true
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+
+-- Title bar
+local titleBar = Instance.new("Frame", frame)
+titleBar.Size             = UDim2.new(1, 0, 0, 32)
+titleBar.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
+titleBar.BorderSizePixel  = 0
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 10)
+
+local titleLbl = Instance.new("TextLabel", titleBar)
+titleLbl.Text      = "LAMZX SCRIPT"
+titleLbl.Size      = UDim2.new(1, 0, 1, 0)
+titleLbl.BackgroundTransparency = 1
+titleLbl.TextColor3 = Color3.new(1,1,1)
+titleLbl.Font      = Enum.Font.GothamBold
+titleLbl.TextSize  = 13
+
+-- Helper: buat toggle button
+local function makeToggle(parent, yPos, labelOff, labelOn, colorOn, colorOff, callback)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size             = UDim2.new(0.9, 0, 0, 36)
+    btn.Position         = UDim2.new(0.05, 0, 0, yPos)
+    btn.BackgroundColor3 = colorOff
+    btn.TextColor3       = Color3.new(1,1,1)
+    btn.Font             = Enum.Font.GothamBold
+    btn.TextSize         = 12
+    btn.Text             = labelOff
+    btn.BorderSizePixel  = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+    local active = false
+    btn.MouseButton1Click:Connect(function()
+        active = not active
+        if active then
+            btn.Text             = labelOn
+            btn.BackgroundColor3 = colorOn
+        else
+            btn.Text             = labelOff
+            btn.BackgroundColor3 = colorOff
+        end
+        callback(active)
+    end)
+
+    return btn
+end
+
+-- Auto Steal toggle
+makeToggle(
+    frame, 42,
+    "AUTO STEAL  [ OFF ]",
+    "AUTO STEAL  [ ON ]",
+    Color3.fromRGB(34, 197, 94),
+    Color3.fromRGB(55, 55, 75),
+    function(on)
+        STATE.AutoSteal = on
+        if on then task.spawn(stealLoop) end
+    end
+)
+
+-- Bypass Ban toggle
+makeToggle(
+    frame, 88,
+    "BYPASS BAN  [ OFF ]",
+    "BYPASS BAN  [ ON ]",
+    Color3.fromRGB(168, 85, 247),
+    Color3.fromRGB(55, 55, 75),
+    function(on)
+        if on then
+            enableBypass()
+        else
+            disableBypass()
+        end
+    end
+)
+
+-- Auto Rejoin toggle
+makeToggle(
+    frame, 134,
+    "AUTO REJOIN  [ OFF ]",
+    "AUTO REJOIN  [ ON ]",
+    Color3.fromRGB(251, 191, 36),
+    Color3.fromRGB(55, 55, 75),
+    function(on)
+        STATE.AutoRejoin = on
+    end
+)
+
+-- Manual Rejoin button
+local rejoinBtn = Instance.new("TextButton", frame)
+rejoinBtn.Text              = "MANUAL REJOIN"
+rejoinBtn.Size              = UDim2.new(0.9, 0, 0, 28)
+rejoinBtn.Position          = UDim2.new(0.05, 0, 0, 182)
+rejoinBtn.BackgroundColor3  = Color3.fromRGB(30, 30, 50)
+rejoinBtn.TextColor3        = Color3.fromRGB(148, 163, 184)
+rejoinBtn.Font              = Enum.Font.Gotham
+rejoinBtn.TextSize          = 11
+rejoinBtn.BorderSizePixel   = 0
+Instance.new("UICorner", rejoinBtn).CornerRadius = UDim.new(0, 7)
+
+rejoinBtn.MouseButton1Click:Connect(function()
+    TeleportService:Teleport(placeId)
+end)
+
+print("[LAMZX] Loaded — toggle via GUI")
